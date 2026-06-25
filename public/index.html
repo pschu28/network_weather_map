@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Network Weather Map</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="map-stage" aria-label="Live internet weather map">
+        <canvas id="weather-map" width="1400" height="760"></canvas>
+        <div class="top-bar">
+          <div>
+            <h1>Network Weather</h1>
+            <p id="subtitle">Simulated regional radar with live-local probes</p>
+          </div>
+          <div class="status-strip">
+            <span id="live-status" class="status-dot"></span>
+            <span id="updated-at">Waiting for first sweep</span>
+          </div>
+        </div>
+        <div id="tooltip" class="tooltip" hidden></div>
+      </section>
+
+      <aside class="control-panel" aria-label="Map controls and readings">
+        <div class="metric-switcher" role="tablist" aria-label="Metric">
+          <button class="active" data-metric="score" type="button">Severity</button>
+          <button data-metric="latencyMs" type="button">Latency</button>
+          <button data-metric="packetLossPct" type="button">Loss</button>
+          <button data-metric="dnsMs" type="button">DNS</button>
+          <button data-metric="tlsMs" type="button">TLS</button>
+          <button data-metric="httpMs" type="button">HTTP</button>
+        </div>
+
+        <section class="summary">
+          <div>
+            <span class="label">Global condition</span>
+            <strong id="global-condition">--</strong>
+          </div>
+          <div>
+            <span class="label">Average severity</span>
+            <strong id="average-score">--</strong>
+          </div>
+        </section>
+
+        <section>
+          <h2>Regional Readings</h2>
+          <div id="reading-list" class="reading-list"></div>
+        </section>
+
+        <section>
+          <h2>Live Local Probe</h2>
+          <div id="local-probe" class="local-probe"></div>
+        </section>
+      </aside>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

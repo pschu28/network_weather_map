@@ -1,0 +1,12 @@
+{
+  "name": "network-weather-map",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Interactive live map of simulated and live-local internet weather.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
