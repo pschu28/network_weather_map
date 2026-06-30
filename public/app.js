@@ -38,6 +38,8 @@ const metrics = {
   httpMs: { max: 800, unit: " ms" }
 };
 
+const metricKeys = Object.keys(metrics).filter((key) => key !== "score");
+
 const landShapes = [
   [
     [-168, 71], [-153, 70], [-142, 60], [-134, 58], [-125, 49], [-124, 40],
@@ -192,6 +194,94 @@ function regionFor(reading) {
   return regionById.get(reading.regionId);
 }
 
+function conditionForScore(score) {
+  if (score >= 75) return "storm";
+  if (score >= 52) return "rain";
+  if (score >= 30) return "cloudy";
+  return "clear";
+}
+
+function clusterRadius() {
+  return clamp(92 - (viewport.scale - 1) * 15, 32, 92);
+}
+
+function average(items, selector) {
+  return items.reduce((sum, item) => sum + selector(item), 0) / items.length;
+}
+
+function buildCluster(entries, index) {
+  const readings = entries.map((entry) => entry.reading);
+  const score = Math.round(average(readings, (reading) => reading.score));
+  const metricsAverage = {};
+
+  for (const key of metricKeys) {
+    metricsAverage[key] = Math.round(average(readings, (reading) => reading.metrics[key] || 0) * 10) / 10;
+  }
+
+  const sources = [...new Set(readings.map((reading) => reading.source))];
+  const regions = entries.map((entry) => entry.region);
+
+  return {
+    id: entries.length === 1 ? readings[0].regionId : `cluster-${index}-${readings.map((reading) => reading.regionId).sort().join("-")}`,
+    isCluster: entries.length > 1,
+    label: entries.length === 1 ? regions[0].name : `${entries.length} region average`,
+    source: sources.length === 1 ? sources[0] : "mixed",
+    score,
+    condition: conditionForScore(score),
+    metrics: metricsAverage,
+    point: {
+      x: average(entries, (entry) => entry.point.x),
+      y: average(entries, (entry) => entry.point.y)
+    },
+    readings,
+    regions
+  };
+}
+
+function mapClusters(readings) {
+  const entries = readings
+    .map((reading) => {
+      const region = regionFor(reading);
+      const point = readingPoint(reading);
+      return region && point ? { reading, region, point } : null;
+    })
+    .filter(Boolean);
+
+  const radius = clusterRadius();
+  const clusters = [];
+  const unused = new Set(entries);
+
+  while (unused.size) {
+    const seed = unused.values().next().value;
+    const group = [seed];
+    unused.delete(seed);
+    let center = { ...seed.point };
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+
+      for (const entry of [...unused]) {
+        const closeToGroup = Math.hypot(entry.point.x - center.x, entry.point.y - center.y) <= radius;
+
+        if (closeToGroup) {
+          group.push(entry);
+          unused.delete(entry);
+          center = {
+            x: average(group, (item) => item.point.x),
+            y: average(group, (item) => item.point.y)
+          };
+          changed = true;
+        }
+      }
+    }
+
+    clusters.push(buildCluster(group, clusters.length));
+  }
+
+  return clusters;
+}
+
 function projectPoint([lon, lat]) {
   return project(lat, lon);
 }
@@ -261,15 +351,12 @@ function drawBackground(width, height) {
   drawMapLabels();
 }
 
-function drawWeatherAreas(readings) {
-  for (const reading of readings) {
-    const point = readingPoint(reading);
-    if (!point) continue;
-
-    const strength = normalizedMetric(reading);
-    const color = conditionColors[reading.condition];
-    const radius = (22 + strength * 52) * Math.sqrt(viewport.scale);
-    const gradient = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
+function drawWeatherAreas(clusters) {
+  for (const cluster of clusters) {
+    const strength = normalizedMetric(cluster);
+    const color = conditionColors[cluster.condition];
+    const radius = (22 + strength * 52 + (cluster.readings.length - 1) * 8) * Math.sqrt(viewport.scale);
+    const gradient = ctx.createRadialGradient(cluster.point.x, cluster.point.y, 0, cluster.point.x, cluster.point.y, radius);
 
     gradient.addColorStop(0, `${color}66`);
     gradient.addColorStop(0.58, `${color}25`);
@@ -277,7 +364,7 @@ function drawWeatherAreas(readings) {
 
     ctx.fillStyle = gradient;
     ctx.beginPath();
-    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    ctx.arc(cluster.point.x, cluster.point.y, radius, 0, Math.PI * 2);
     ctx.fill();
   }
 }
@@ -297,19 +384,17 @@ function drawMapLabels() {
   ctx.textBaseline = "alphabetic";
 }
 
-function drawMarkers(readings) {
-  for (const reading of readings) {
-    const point = readingPoint(reading);
-    if (!point) continue;
-
-    const color = conditionColors[reading.condition];
-    const isHover = hoverRegion === reading.regionId;
+function drawMarkers(clusters) {
+  for (const cluster of clusters) {
+    const color = conditionColors[cluster.condition];
+    const isHover = hoverRegion === cluster.id;
+    const markerRadius = cluster.isCluster ? 9 + Math.sqrt(cluster.readings.length) * 5 : 6;
 
     ctx.fillStyle = "#f8fbf8";
     ctx.strokeStyle = color;
     ctx.lineWidth = isHover ? 3 : 2;
     ctx.beginPath();
-    ctx.arc(point.x, point.y, isHover ? 9 : 6, 0, Math.PI * 2);
+    ctx.arc(cluster.point.x, cluster.point.y, isHover ? markerRadius + 3 : markerRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
@@ -317,9 +402,9 @@ function drawMarkers(readings) {
     ctx.strokeStyle = "rgba(8, 16, 20, 0.9)";
     ctx.lineWidth = 3;
     ctx.font = "700 11px system-ui, sans-serif";
-    const label = String(Math.round(metricValue(reading)));
-    ctx.strokeText(label, point.x + 12, point.y + 4);
-    ctx.fillText(label, point.x + 12, point.y + 4);
+    const label = cluster.isCluster ? `${Math.round(metricValue(cluster))} avg` : String(Math.round(metricValue(cluster)));
+    ctx.strokeText(label, cluster.point.x + markerRadius + 6, cluster.point.y + 4);
+    ctx.fillText(label, cluster.point.x + markerRadius + 6, cluster.point.y + 4);
   }
 }
 
@@ -327,8 +412,9 @@ function draw() {
   const rect = canvas.getBoundingClientRect();
   drawBackground(rect.width, rect.height);
   if (snapshot) {
-    drawWeatherAreas(snapshot.readings);
-    drawMarkers(snapshot.readings);
+    const clusters = mapClusters(snapshot.readings);
+    drawWeatherAreas(clusters);
+    drawMarkers(clusters);
   }
 }
 
@@ -389,38 +475,36 @@ function updateTooltip(event) {
 
   const rect = canvas.getBoundingClientRect();
   const mouse = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  const clusters = mapClusters(snapshot.readings);
   let nearest = null;
   let nearestDistance = Infinity;
 
-  for (const reading of snapshot.readings) {
-    const region = regionFor(reading);
-    const point = readingPoint(reading);
-    if (!point || !region) continue;
-
-    const distance = Math.hypot(mouse.x - point.x, mouse.y - point.y);
+  for (const cluster of clusters) {
+    const distance = Math.hypot(mouse.x - cluster.point.x, mouse.y - cluster.point.y);
     if (distance < nearestDistance) {
-      nearest = { reading, region, point };
+      nearest = cluster;
       nearestDistance = distance;
     }
   }
 
-  if (!nearest || nearestDistance > 28) {
+  if (!nearest || nearestDistance > (nearest.isCluster ? 36 : 28)) {
     clearHover();
     return;
   }
 
-  const changed = hoverRegion !== nearest.region.id;
-  hoverRegion = nearest.region.id;
+  const changed = hoverRegion !== nearest.id;
+  hoverRegion = nearest.id;
   tooltip.hidden = false;
   tooltip.style.left = `${Math.min(rect.width - 250, nearest.point.x + 16)}px`;
   tooltip.style.top = `${Math.max(80, nearest.point.y - 18)}px`;
   tooltip.innerHTML = `
-    <strong>${nearest.region.name}</strong>
-    <span>${nearest.reading.source} · ${nearest.reading.condition}</span>
-    <span>Latency: ${nearest.reading.metrics.latencyMs} ms</span>
-    <span>Jitter: ${nearest.reading.metrics.jitterMs} ms</span>
-    <span>Loss: ${nearest.reading.metrics.packetLossPct}%</span>
-    <span>DNS/TLS/HTTP: ${nearest.reading.metrics.dnsMs}/${nearest.reading.metrics.tlsMs}/${nearest.reading.metrics.httpMs} ms</span>
+    <strong>${nearest.label}</strong>
+    <span>${nearest.source} · ${nearest.condition} · ${nearest.readings.length} reading${nearest.readings.length === 1 ? "" : "s"}</span>
+    <span>Latency: ${nearest.metrics.latencyMs} ms</span>
+    <span>Jitter: ${nearest.metrics.jitterMs} ms</span>
+    <span>Loss: ${nearest.metrics.packetLossPct}%</span>
+    <span>DNS/TLS/HTTP: ${nearest.metrics.dnsMs}/${nearest.metrics.tlsMs}/${nearest.metrics.httpMs} ms</span>
+    ${nearest.isCluster ? `<span>${nearest.regions.map((region) => region.name).join(", ")}</span>` : ""}
   `;
   if (changed) draw();
 }
