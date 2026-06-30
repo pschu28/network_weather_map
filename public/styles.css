@@ -1,17 +1,17 @@
 :root {
   color-scheme: dark;
-  --bg: #071015;
-  --panel: #111a20;
-  --panel-strong: #16232b;
-  --text: #ecf6f3;
-  --muted: #98aaa7;
-  --line: rgba(236, 246, 243, 0.14);
-  --clear: #44d07b;
-  --cloudy: #f2c94c;
-  --rain: #ff8a4c;
-  --storm: #ff4d6d;
-  --water: #0b1d27;
-  --land: #193236;
+  --bg: #0d151a;
+  --panel: #11191f;
+  --panel-strong: #182229;
+  --text: #f1f5f1;
+  --muted: #9aa9a7;
+  --line: rgba(229, 237, 233, 0.13);
+  --clear: #18b875;
+  --cloudy: #e4b737;
+  --rain: #f47c3c;
+  --storm: #e84d66;
+  --water: #101d24;
+  --land: #263530;
 }
 
 * {
@@ -42,7 +42,7 @@ button {
   position: relative;
   min-width: 0;
   overflow: hidden;
-  background: radial-gradient(circle at 50% 40%, rgba(45, 124, 118, 0.18), transparent 42%), var(--water);
+  background: var(--water);
 }
 
 #weather-map {
@@ -88,7 +88,7 @@ h1 {
   padding: 9px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(7, 16, 21, 0.72);
+  background: rgba(17, 25, 31, 0.82);
   color: var(--muted);
   font-size: 13px;
   backdrop-filter: blur(12px);
@@ -99,7 +99,7 @@ h1 {
   height: 9px;
   border-radius: 999px;
   background: var(--storm);
-  box-shadow: 0 0 18px currentColor;
+  box-shadow: none;
 }
 
 .status-dot.online {
@@ -127,14 +127,14 @@ h1 {
   min-height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--panel-strong);
+  background: #151f26;
   color: var(--muted);
   cursor: pointer;
 }
 
 .metric-switcher button.active {
-  border-color: rgba(68, 208, 123, 0.72);
-  background: rgba(68, 208, 123, 0.14);
+  border-color: rgba(24, 184, 117, 0.76);
+  background: rgba(24, 184, 117, 0.15);
   color: var(--text);
 }
 
@@ -247,7 +247,7 @@ h2 {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(7, 16, 21, 0.92);
+  background: rgba(17, 25, 31, 0.94);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
   pointer-events: none;
 }

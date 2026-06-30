@@ -14,39 +14,41 @@ let selectedMetric = "score";
 let hoverRegion = null;
 
 const conditionColors = {
-  clear: "#44d07b",
-  cloudy: "#f2c94c",
-  rain: "#ff8a4c",
-  storm: "#ff4d6d"
+  clear: "#18b875",
+  cloudy: "#e4b737",
+  rain: "#f47c3c",
+  storm: "#e84d66"
 };
 
 const landShapes = [
   [
-    [-168, 72], [-150, 70], [-137, 60], [-125, 50], [-124, 40], [-118, 32],
-    [-107, 24], [-97, 19], [-88, 21], [-82, 26], [-75, 36], [-66, 44],
-    [-54, 48], [-58, 56], [-73, 61], [-92, 66], [-116, 69], [-140, 72]
+    [-168, 71], [-153, 70], [-142, 60], [-134, 58], [-125, 49], [-124, 40],
+    [-117, 33], [-111, 31], [-108, 24], [-99, 19], [-90, 18], [-83, 25],
+    [-80, 32], [-74, 40], [-61, 47], [-53, 52], [-58, 57], [-76, 58],
+    [-92, 64], [-112, 69], [-136, 70], [-151, 73]
   ],
   [
     [-73, 84], [-24, 82], [-16, 73], [-30, 64], [-44, 60], [-56, 66],
     [-66, 76]
   ],
   [
-    [-82, 13], [-76, 8], [-78, 0], [-72, -10], [-70, -21], [-64, -31],
-    [-58, -42], [-68, -55], [-77, -48], [-81, -32], [-76, -18], [-80, -5]
+    [-81, 12], [-74, 9], [-77, 1], [-73, -8], [-70, -18], [-65, -25],
+    [-63, -36], [-57, -45], [-66, -55], [-73, -52], [-76, -41], [-72, -31],
+    [-76, -21], [-80, -10], [-79, 1]
   ],
   [
-    [-11, 72], [8, 71], [25, 67], [31, 59], [24, 50], [12, 45],
-    [2, 43], [-8, 51], [-18, 61]
+    [-11, 72], [8, 71], [24, 67], [31, 59], [24, 51], [13, 45],
+    [3, 42], [-6, 45], [-10, 54], [-18, 61]
   ],
   [
-    [-18, 36], [-5, 35], [9, 37], [25, 32], [33, 21], [42, 12],
-    [48, -3], [42, -18], [35, -30], [22, -35], [13, -30], [4, -14],
-    [-7, 5], [-14, 20]
+    [-17, 36], [-5, 36], [10, 37], [25, 32], [33, 22], [42, 11],
+    [50, -2], [44, -17], [35, -29], [25, -34], [17, -34], [11, -25],
+    [5, -15], [-2, -5], [-8, 6], [-14, 19]
   ],
   [
-    [26, 69], [58, 70], [88, 72], [117, 67], [142, 57], [154, 48],
-    [148, 34], [126, 26], [112, 18], [104, 5], [91, 8], [78, 21],
-    [64, 25], [48, 32], [34, 43]
+    [26, 69], [54, 70], [83, 72], [112, 68], [136, 58], [153, 49],
+    [146, 37], [126, 29], [116, 23], [109, 14], [100, 8], [90, 11],
+    [80, 21], [65, 24], [49, 31], [36, 43], [30, 55]
   ],
   [
     [34, 32], [48, 30], [57, 22], [54, 13], [44, 12], [37, 22]
@@ -63,6 +65,27 @@ const landShapes = [
   ]
 ];
 
+const borderLines = [
+  [[-125, 49], [-95, 49], [-67, 45]],
+  [[-117, 32], [-104, 31], [-97, 26]],
+  [[-10, 36], [3, 43], [15, 45], [30, 46]],
+  [[30, 31], [42, 36], [55, 39], [70, 42], [88, 45]],
+  [[-16, 20], [4, 13], [18, 12], [34, 7]],
+  [[-74, -10], [-66, -16], [-62, -30], [-58, -39]]
+];
+
+const mapLabels = [
+  { label: "North America", lat: 52, lon: -104 },
+  { label: "South America", lat: -18, lon: -62 },
+  { label: "Europe", lat: 52, lon: 14 },
+  { label: "Africa", lat: 6, lon: 20 },
+  { label: "Asia", lat: 45, lon: 86 },
+  { label: "Australia", lat: -27, lon: 134 },
+  { label: "Atlantic Ocean", lat: 10, lon: -35, water: true },
+  { label: "Pacific Ocean", lat: 5, lon: -150, water: true },
+  { label: "Indian Ocean", lat: -18, lon: 78, water: true }
+];
+
 function resizeCanvas() {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
@@ -73,9 +96,15 @@ function resizeCanvas() {
 
 function project(lat, lon) {
   const rect = canvas.getBoundingClientRect();
+  const maxLat = 78;
+  const clippedLat = Math.max(-maxLat, Math.min(maxLat, lat));
+  const latRad = (clippedLat * Math.PI) / 180;
+  const mercatorN = Math.log(Math.tan(Math.PI / 4 + latRad / 2));
+  const topLat = (maxLat * Math.PI) / 180;
+  const topMercator = Math.log(Math.tan(Math.PI / 4 + topLat / 2));
   return {
     x: ((lon + 180) / 360) * rect.width,
-    y: ((90 - lat) / 180) * rect.height
+    y: (0.5 - mercatorN / (2 * topMercator)) * rect.height
   };
 }
 
@@ -101,20 +130,26 @@ function normalizedMetric(reading) {
 
 function drawBackground(width, height) {
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "#0b1d27";
+  ctx.fillStyle = "#101d24";
   ctx.fillRect(0, 0, width, height);
 
-  ctx.strokeStyle = "rgba(236, 246, 243, 0.045)";
+  const waterGradient = ctx.createLinearGradient(0, 0, 0, height);
+  waterGradient.addColorStop(0, "#142631");
+  waterGradient.addColorStop(1, "#0f1b22");
+  ctx.fillStyle = waterGradient;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.strokeStyle = "rgba(196, 216, 216, 0.055)";
   ctx.lineWidth = 1;
-  for (let lon = -180; lon <= 180; lon += 30) {
-    const a = project(-85, lon);
-    const b = project(85, lon);
+  for (let lon = -180; lon <= 180; lon += 45) {
+    const a = project(-78, lon);
+    const b = project(78, lon);
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
   }
-  for (let lat = -60; lat <= 75; lat += 15) {
+  for (let lat = -60; lat <= 75; lat += 30) {
     const a = project(lat, -180);
     const b = project(lat, 180);
     ctx.beginPath();
@@ -123,8 +158,10 @@ function drawBackground(width, height) {
     ctx.stroke();
   }
 
-  ctx.fillStyle = "#183235";
-  ctx.strokeStyle = "rgba(236, 246, 243, 0.18)";
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.fillStyle = "#263530";
+  ctx.strokeStyle = "rgba(233, 239, 235, 0.28)";
   for (const shape of landShapes) {
     ctx.beginPath();
     shape.forEach(([lon, lat], index) => {
@@ -136,6 +173,14 @@ function drawBackground(width, height) {
     ctx.fill();
     ctx.stroke();
   }
+
+  ctx.strokeStyle = "rgba(233, 239, 235, 0.09)";
+  ctx.lineWidth = 1;
+  for (const line of borderLines) {
+    drawLine(line);
+  }
+
+  drawMapLabels();
 }
 
 function drawWeatherAreas(readings) {
@@ -146,11 +191,11 @@ function drawWeatherAreas(readings) {
     const point = project(region.lat, region.lon);
     const strength = normalizedMetric(reading);
     const color = conditionColors[reading.condition];
-    const radius = 26 + strength * 62;
+    const radius = 22 + strength * 52;
     const gradient = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
 
-    gradient.addColorStop(0, `${color}70`);
-    gradient.addColorStop(0.55, `${color}2f`);
+    gradient.addColorStop(0, `${color}66`);
+    gradient.addColorStop(0.58, `${color}25`);
     gradient.addColorStop(1, `${color}00`);
 
     ctx.fillStyle = gradient;
@@ -158,6 +203,31 @@ function drawWeatherAreas(readings) {
     ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
     ctx.fill();
   }
+}
+
+function drawLine(points) {
+  ctx.beginPath();
+  points.forEach(([lon, lat], index) => {
+    const point = project(lat, lon);
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  });
+  ctx.stroke();
+}
+
+function drawMapLabels() {
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  for (const item of mapLabels) {
+    const point = project(item.lat, item.lon);
+    ctx.font = item.water ? "500 12px system-ui, sans-serif" : "700 12px system-ui, sans-serif";
+    ctx.fillStyle = item.water ? "rgba(168, 191, 201, 0.28)" : "rgba(221, 230, 225, 0.32)";
+    ctx.fillText(item.label, point.x, point.y);
+  }
+
+  ctx.textAlign = "start";
+  ctx.textBaseline = "alphabetic";
 }
 
 function drawMarkers(readings) {
@@ -169,16 +239,19 @@ function drawMarkers(readings) {
     const color = conditionColors[reading.condition];
     const isHover = hoverRegion === region.id;
 
-    ctx.fillStyle = "#071015";
+    ctx.fillStyle = "#f8fbf8";
     ctx.strokeStyle = color;
     ctx.lineWidth = isHover ? 3 : 2;
     ctx.beginPath();
-    ctx.arc(point.x, point.y, isHover ? 8 : 6, 0, Math.PI * 2);
+    ctx.arc(point.x, point.y, isHover ? 8 : 5.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    ctx.fillStyle = "#ecf6f3";
-    ctx.font = "700 12px system-ui, sans-serif";
+    ctx.fillStyle = "rgba(245, 249, 247, 0.92)";
+    ctx.strokeStyle = "rgba(8, 16, 20, 0.9)";
+    ctx.lineWidth = 3;
+    ctx.font = "700 11px system-ui, sans-serif";
+    ctx.strokeText(String(Math.round(metricValue(reading))), point.x + 12, point.y + 4);
     ctx.fillText(String(Math.round(metricValue(reading))), point.x + 12, point.y + 4);
   }
 }
