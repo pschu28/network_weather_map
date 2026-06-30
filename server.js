@@ -30,8 +30,19 @@ const targets = [
 
 const simulatedState = new Map();
 const localHistory = new Map();
+const simulatedRegions = regions.filter((region) => region.type === "simulated");
+const targetNames = targets.map((target) => target.name).join(", ");
 
-for (const region of regions.filter((region) => region.type === "simulated")) {
+const scoreFactors = [
+  ["latencyMs", 280, 22],
+  ["jitterMs", 90, 16],
+  ["packetLossPct", 12, 28],
+  ["dnsMs", 180, 10],
+  ["tlsMs", 260, 10],
+  ["httpMs", 700, 14]
+];
+
+for (const region of simulatedRegions) {
   simulatedState.set(region.id, {
     phase: Math.random() * Math.PI * 2,
     severity: Math.random() * 35,
@@ -56,14 +67,16 @@ function round(value) {
   return Math.round(value * 10) / 10;
 }
 
+function average(items, selector) {
+  return items.reduce((sum, item) => sum + selector(item), 0) / items.length;
+}
+
 function scoreMetrics(metrics) {
-  const latency = clamp(metrics.latencyMs / 280, 0, 1);
-  const jitter = clamp(metrics.jitterMs / 90, 0, 1);
-  const loss = clamp(metrics.packetLossPct / 12, 0, 1);
-  const dnsTime = clamp(metrics.dnsMs / 180, 0, 1);
-  const tlsTime = clamp(metrics.tlsMs / 260, 0, 1);
-  const httpTime = clamp(metrics.httpMs / 700, 0, 1);
-  return round((latency * 22 + jitter * 16 + loss * 28 + dnsTime * 10 + tlsTime * 10 + httpTime * 14));
+  const score = scoreFactors.reduce((sum, [key, threshold, weight]) => {
+    return sum + clamp(metrics[key] / threshold, 0, 1) * weight;
+  }, 0);
+
+  return round(score);
 }
 
 function conditionFor(score) {
@@ -103,6 +116,24 @@ function buildSimulatedReading(region, now) {
   };
 }
 
+function buildProbeTimings(timings, startedAt, endedAt) {
+  return {
+    totalMs: endedAt - startedAt,
+    dnsMs: timings.lookup ? timings.lookup - startedAt : 0,
+    tcpMs: timings.connect && timings.lookup ? timings.connect - timings.lookup : 0,
+    tlsMs: timings.secureConnect && timings.connect ? timings.secureConnect - timings.connect : 0,
+    httpMs: timings.response && timings.secureConnect ? timings.response - timings.secureConnect : endedAt - startedAt
+  };
+}
+
+function buildProbeResult(base, timings, startedAt) {
+  const endedAt = performance.now();
+  return {
+    ...base,
+    ...buildProbeTimings(timings, startedAt, endedAt)
+  };
+}
+
 function probeTarget(target, timeoutMs = 4500) {
   return new Promise((resolve) => {
     const startedAt = performance.now();
@@ -122,16 +153,10 @@ function probeTarget(target, timeoutMs = 4500) {
         timings.response = performance.now();
         response.resume();
         response.on("end", () => {
-          const endedAt = performance.now();
-          resolve({
+          resolve(buildProbeResult({
             ok: response.statusCode < 500,
-            statusCode: response.statusCode,
-            totalMs: endedAt - startedAt,
-            dnsMs: timings.lookup ? timings.lookup - startedAt : 0,
-            tcpMs: timings.connect && timings.lookup ? timings.connect - timings.lookup : 0,
-            tlsMs: timings.secureConnect && timings.connect ? timings.secureConnect - timings.connect : 0,
-            httpMs: timings.response && timings.secureConnect ? timings.response - timings.secureConnect : endedAt - startedAt
-          });
+            statusCode: response.statusCode
+          }, timings, startedAt));
         });
       }
     );
@@ -153,16 +178,10 @@ function probeTarget(target, timeoutMs = 4500) {
     });
 
     request.on("error", (error) => {
-      const endedAt = performance.now();
-      resolve({
+      resolve(buildProbeResult({
         ok: false,
-        error: error.message,
-        totalMs: endedAt - startedAt,
-        dnsMs: timings.lookup ? timings.lookup - startedAt : 0,
-        tcpMs: timings.connect && timings.lookup ? timings.connect - timings.lookup : 0,
-        tlsMs: timings.secureConnect && timings.connect ? timings.secureConnect - timings.connect : 0,
-        httpMs: endedAt - startedAt
-      });
+        error: error.message
+      }, timings, startedAt));
     });
 
     request.end();
@@ -180,8 +199,8 @@ async function buildLocalReading(now) {
   const successful = results.filter(({ result }) => result.ok);
   const total = results.length || 1;
   const usable = successful.length ? successful : results;
-  const avg = (selector) => usable.reduce((sum, item) => sum + selector(item.result), 0) / usable.length;
-  const latencyMs = avg((result) => result.totalMs);
+  const avgResult = (selector) => average(usable, (item) => selector(item.result));
+  const latencyMs = avgResult((result) => result.totalMs);
   const previous = localHistory.get("latencyMs") || latencyMs;
   localHistory.set("latencyMs", latencyMs);
 
@@ -189,9 +208,9 @@ async function buildLocalReading(now) {
     latencyMs: round(latencyMs),
     jitterMs: round(Math.abs(latencyMs - previous)),
     packetLossPct: round(((total - successful.length) / total) * 100),
-    dnsMs: round(avg((result) => result.dnsMs)),
-    tlsMs: round(avg((result) => result.tlsMs)),
-    httpMs: round(avg((result) => result.httpMs))
+    dnsMs: round(avgResult((result) => result.dnsMs)),
+    tlsMs: round(avgResult((result) => result.tlsMs)),
+    httpMs: round(avgResult((result) => result.httpMs))
   };
 
   const score = scoreMetrics(metrics);
@@ -199,7 +218,7 @@ async function buildLocalReading(now) {
     regionId: "local",
     source: "live-local",
     updatedAt: now.toISOString(),
-    target: "Cloudflare, Google, GitHub",
+    target: targetNames,
     score,
     condition: conditionFor(score),
     metrics,
@@ -223,9 +242,7 @@ async function buildWeatherSnapshot() {
     targets,
     readings: [
       local,
-      ...regions
-        .filter((region) => region.type === "simulated")
-        .map((region) => buildSimulatedReading(region, now))
+      ...simulatedRegions.map((region) => buildSimulatedReading(region, now))
     ]
   };
 }

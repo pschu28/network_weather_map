@@ -12,12 +12,22 @@ const metricButtons = [...document.querySelectorAll("[data-metric]")];
 let snapshot = null;
 let selectedMetric = "score";
 let hoverRegion = null;
+let regionById = new Map();
 
 const conditionColors = {
   clear: "#18b875",
   cloudy: "#e4b737",
   rain: "#f47c3c",
   storm: "#e84d66"
+};
+
+const metrics = {
+  score: { max: 100, unit: "" },
+  latencyMs: { max: 360, unit: " ms" },
+  packetLossPct: { max: 12, unit: "%" },
+  dnsMs: { max: 180, unit: " ms" },
+  tlsMs: { max: 260, unit: " ms" },
+  httpMs: { max: 800, unit: " ms" }
 };
 
 const landShapes = [
@@ -113,19 +123,36 @@ function metricValue(reading) {
   return reading.metrics[selectedMetric] || 0;
 }
 
-function metricMax() {
-  return {
-    score: 100,
-    latencyMs: 360,
-    packetLossPct: 12,
-    dnsMs: 180,
-    tlsMs: 260,
-    httpMs: 800
-  }[selectedMetric];
+function normalizedMetric(reading) {
+  return Math.min(1, metricValue(reading) / metrics[selectedMetric].max);
 }
 
-function normalizedMetric(reading) {
-  return Math.min(1, metricValue(reading) / metricMax());
+function formatMetric(reading) {
+  const value = metricValue(reading);
+  return `${value}${metrics[selectedMetric].unit}`;
+}
+
+function regionFor(reading) {
+  return regionById.get(reading.regionId);
+}
+
+function projectPoint([lon, lat]) {
+  return project(lat, lon);
+}
+
+function drawPath(points, { close = false } = {}) {
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    const { x, y } = projectPoint(point);
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  if (close) ctx.closePath();
+}
+
+function readingPoint(reading) {
+  const region = regionFor(reading);
+  return region ? project(region.lat, region.lon) : null;
 }
 
 function drawBackground(width, height) {
@@ -163,13 +190,7 @@ function drawBackground(width, height) {
   ctx.fillStyle = "#263530";
   ctx.strokeStyle = "rgba(233, 239, 235, 0.28)";
   for (const shape of landShapes) {
-    ctx.beginPath();
-    shape.forEach(([lon, lat], index) => {
-      const point = project(lat, lon);
-      if (index === 0) ctx.moveTo(point.x, point.y);
-      else ctx.lineTo(point.x, point.y);
-    });
-    ctx.closePath();
+    drawPath(shape, { close: true });
     ctx.fill();
     ctx.stroke();
   }
@@ -177,7 +198,8 @@ function drawBackground(width, height) {
   ctx.strokeStyle = "rgba(233, 239, 235, 0.09)";
   ctx.lineWidth = 1;
   for (const line of borderLines) {
-    drawLine(line);
+    drawPath(line);
+    ctx.stroke();
   }
 
   drawMapLabels();
@@ -185,10 +207,9 @@ function drawBackground(width, height) {
 
 function drawWeatherAreas(readings) {
   for (const reading of readings) {
-    const region = snapshot.regions.find((item) => item.id === reading.regionId);
-    if (!region) continue;
+    const point = readingPoint(reading);
+    if (!point) continue;
 
-    const point = project(region.lat, region.lon);
     const strength = normalizedMetric(reading);
     const color = conditionColors[reading.condition];
     const radius = 22 + strength * 52;
@@ -203,16 +224,6 @@ function drawWeatherAreas(readings) {
     ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
     ctx.fill();
   }
-}
-
-function drawLine(points) {
-  ctx.beginPath();
-  points.forEach(([lon, lat], index) => {
-    const point = project(lat, lon);
-    if (index === 0) ctx.moveTo(point.x, point.y);
-    else ctx.lineTo(point.x, point.y);
-  });
-  ctx.stroke();
 }
 
 function drawMapLabels() {
@@ -232,12 +243,11 @@ function drawMapLabels() {
 
 function drawMarkers(readings) {
   for (const reading of readings) {
-    const region = snapshot.regions.find((item) => item.id === reading.regionId);
-    if (!region) continue;
+    const point = readingPoint(reading);
+    if (!point) continue;
 
-    const point = project(region.lat, region.lon);
     const color = conditionColors[reading.condition];
-    const isHover = hoverRegion === region.id;
+    const isHover = hoverRegion === reading.regionId;
 
     ctx.fillStyle = "#f8fbf8";
     ctx.strokeStyle = color;
@@ -251,8 +261,9 @@ function drawMarkers(readings) {
     ctx.strokeStyle = "rgba(8, 16, 20, 0.9)";
     ctx.lineWidth = 3;
     ctx.font = "700 11px system-ui, sans-serif";
-    ctx.strokeText(String(Math.round(metricValue(reading))), point.x + 12, point.y + 4);
-    ctx.fillText(String(Math.round(metricValue(reading))), point.x + 12, point.y + 4);
+    const label = String(Math.round(metricValue(reading)));
+    ctx.strokeText(label, point.x + 12, point.y + 4);
+    ctx.fillText(label, point.x + 12, point.y + 4);
   }
 }
 
@@ -263,12 +274,6 @@ function draw() {
     drawWeatherAreas(snapshot.readings);
     drawMarkers(snapshot.readings);
   }
-}
-
-function formatMetric(reading) {
-  if (selectedMetric === "score") return `${reading.score}`;
-  const value = metricValue(reading);
-  return selectedMetric === "packetLossPct" ? `${value}%` : `${value} ms`;
 }
 
 function renderPanels() {
@@ -284,7 +289,7 @@ function renderPanels() {
 
   readingList.innerHTML = readings
     .map((reading) => {
-      const region = snapshot.regions.find((item) => item.id === reading.regionId);
+      const region = regionFor(reading);
       return `
         <article class="reading" data-region="${reading.regionId}">
           <span class="condition-bar" style="background:${conditionColors[reading.condition]}"></span>
@@ -313,6 +318,7 @@ async function loadWeather() {
   try {
     const response = await fetch("/api/weather", { cache: "no-store" });
     snapshot = await response.json();
+    regionById = new Map(snapshot.regions.map((region) => [region.id, region]));
     liveStatus.classList.add("online");
     renderPanels();
     draw();
@@ -331,8 +337,10 @@ function updateTooltip(event) {
   let nearestDistance = Infinity;
 
   for (const reading of snapshot.readings) {
-    const region = snapshot.regions.find((item) => item.id === reading.regionId);
-    const point = project(region.lat, region.lon);
+    const region = regionFor(reading);
+    const point = readingPoint(reading);
+    if (!point || !region) continue;
+
     const distance = Math.hypot(mouse.x - point.x, mouse.y - point.y);
     if (distance < nearestDistance) {
       nearest = { reading, region, point };
@@ -341,10 +349,7 @@ function updateTooltip(event) {
   }
 
   if (!nearest || nearestDistance > 28) {
-    const changed = hoverRegion !== null;
-    hoverRegion = null;
-    tooltip.hidden = true;
-    if (changed) draw();
+    clearHover();
     return;
   }
 
@@ -364,6 +369,13 @@ function updateTooltip(event) {
   if (changed) draw();
 }
 
+function clearHover() {
+  const changed = hoverRegion !== null;
+  hoverRegion = null;
+  tooltip.hidden = true;
+  if (changed) draw();
+}
+
 metricButtons.forEach((button) => {
   button.addEventListener("click", () => {
     selectedMetric = button.dataset.metric;
@@ -374,11 +386,7 @@ metricButtons.forEach((button) => {
 });
 
 canvas.addEventListener("mousemove", updateTooltip);
-canvas.addEventListener("mouseleave", () => {
-  hoverRegion = null;
-  tooltip.hidden = true;
-  draw();
-});
+canvas.addEventListener("mouseleave", clearHover);
 
 window.addEventListener("resize", () => {
   resizeCanvas();
