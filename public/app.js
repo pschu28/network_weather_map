@@ -8,11 +8,19 @@ const averageScore = document.querySelector("#average-score");
 const readingList = document.querySelector("#reading-list");
 const localProbe = document.querySelector("#local-probe");
 const metricButtons = [...document.querySelectorAll("[data-metric]")];
+const zoomInButton = document.querySelector("#zoom-in");
+const zoomOutButton = document.querySelector("#zoom-out");
+const zoomResetButton = document.querySelector("#zoom-reset");
 
 let snapshot = null;
 let selectedMetric = "score";
 let hoverRegion = null;
 let regionById = new Map();
+let viewport = { scale: 1, x: 0, y: 0 };
+let dragState = null;
+
+const minZoom = 1;
+const maxZoom = 5;
 
 const conditionColors = {
   clear: "#18b875",
@@ -102,9 +110,31 @@ function resizeCanvas() {
   canvas.width = Math.max(1, Math.floor(rect.width * dpr));
   canvas.height = Math.max(1, Math.floor(rect.height * dpr));
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  clampViewport();
 }
 
-function project(lat, lon) {
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function clampViewport() {
+  const rect = canvas.getBoundingClientRect();
+  viewport.scale = clamp(viewport.scale, minZoom, maxZoom);
+
+  const maxX = Math.max(0, rect.width * (viewport.scale - 1));
+  const maxY = Math.max(0, rect.height * (viewport.scale - 1));
+  viewport.x = clamp(viewport.x, -maxX, 0);
+  viewport.y = clamp(viewport.y, -maxY, 0);
+}
+
+function screenPoint(basePoint) {
+  return {
+    x: basePoint.x * viewport.scale + viewport.x,
+    y: basePoint.y * viewport.scale + viewport.y
+  };
+}
+
+function projectBase(lat, lon) {
   const rect = canvas.getBoundingClientRect();
   const maxLat = 78;
   const clippedLat = Math.max(-maxLat, Math.min(maxLat, lat));
@@ -116,6 +146,32 @@ function project(lat, lon) {
     x: ((lon + 180) / 360) * rect.width,
     y: (0.5 - mercatorN / (2 * topMercator)) * rect.height
   };
+}
+
+function project(lat, lon) {
+  return screenPoint(projectBase(lat, lon));
+}
+
+function setZoom(nextScale, origin = null) {
+  const rect = canvas.getBoundingClientRect();
+  const focus = origin || { x: rect.width / 2, y: rect.height / 2 };
+  const previousScale = viewport.scale;
+  const scale = clamp(nextScale, minZoom, maxZoom);
+  if (scale === previousScale) return;
+
+  const worldX = (focus.x - viewport.x) / previousScale;
+  const worldY = (focus.y - viewport.y) / previousScale;
+  viewport.scale = scale;
+  viewport.x = focus.x - worldX * scale;
+  viewport.y = focus.y - worldY * scale;
+  clampViewport();
+  draw();
+}
+
+function resetViewport() {
+  viewport = { scale: 1, x: 0, y: 0 };
+  clearHover();
+  draw();
 }
 
 function metricValue(reading) {
@@ -212,7 +268,7 @@ function drawWeatherAreas(readings) {
 
     const strength = normalizedMetric(reading);
     const color = conditionColors[reading.condition];
-    const radius = 22 + strength * 52;
+    const radius = (22 + strength * 52) * Math.sqrt(viewport.scale);
     const gradient = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
 
     gradient.addColorStop(0, `${color}66`);
@@ -253,7 +309,7 @@ function drawMarkers(readings) {
     ctx.strokeStyle = color;
     ctx.lineWidth = isHover ? 3 : 2;
     ctx.beginPath();
-    ctx.arc(point.x, point.y, isHover ? 8 : 5.5, 0, Math.PI * 2);
+    ctx.arc(point.x, point.y, isHover ? 9 : 6, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
@@ -329,7 +385,7 @@ async function loadWeather() {
 }
 
 function updateTooltip(event) {
-  if (!snapshot) return;
+  if (!snapshot || dragState) return;
 
   const rect = canvas.getBoundingClientRect();
   const mouse = { x: event.clientX - rect.left, y: event.clientY - rect.top };
@@ -376,6 +432,11 @@ function clearHover() {
   if (changed) draw();
 }
 
+function mapPointer(event) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+}
+
 metricButtons.forEach((button) => {
   button.addEventListener("click", () => {
     selectedMetric = button.dataset.metric;
@@ -385,6 +446,54 @@ metricButtons.forEach((button) => {
   });
 });
 
+zoomInButton.addEventListener("click", () => setZoom(viewport.scale * 1.35));
+zoomOutButton.addEventListener("click", () => setZoom(viewport.scale / 1.35));
+zoomResetButton.addEventListener("click", resetViewport);
+
+canvas.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  const direction = event.deltaY < 0 ? 1 : -1;
+  const factor = direction > 0 ? 1.16 : 1 / 1.16;
+  setZoom(viewport.scale * factor, mapPointer(event));
+}, { passive: false });
+
+canvas.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0 && event.pointerType === "mouse") return;
+  dragState = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    viewportX: viewport.x,
+    viewportY: viewport.y,
+    moved: false
+  };
+  canvas.setPointerCapture(event.pointerId);
+  canvas.classList.add("dragging");
+  clearHover();
+});
+
+canvas.addEventListener("pointermove", (event) => {
+  if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+  const dx = event.clientX - dragState.startX;
+  const dy = event.clientY - dragState.startY;
+  if (Math.abs(dx) + Math.abs(dy) > 2) dragState.moved = true;
+
+  viewport.x = dragState.viewportX + dx;
+  viewport.y = dragState.viewportY + dy;
+  clampViewport();
+  draw();
+});
+
+function endDrag(event) {
+  if (!dragState || dragState.pointerId !== event.pointerId) return;
+  canvas.releasePointerCapture(event.pointerId);
+  canvas.classList.remove("dragging");
+  dragState = null;
+}
+
+canvas.addEventListener("pointerup", endDrag);
+canvas.addEventListener("pointercancel", endDrag);
 canvas.addEventListener("mousemove", updateTooltip);
 canvas.addEventListener("mouseleave", clearHover);
 
