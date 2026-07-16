@@ -1,10 +1,13 @@
 const canvas = document.querySelector("#weather-map");
 const ctx = canvas.getContext("2d");
 const tooltip = document.querySelector("#tooltip");
+const subtitle = document.querySelector("#subtitle");
 const liveStatus = document.querySelector("#live-status");
 const updatedAt = document.querySelector("#updated-at");
 const globalCondition = document.querySelector("#global-condition");
 const averageScore = document.querySelector("#average-score");
+const liveRegionCount = document.querySelector("#live-region-count");
+const probeCount = document.querySelector("#probe-count");
 const readingList = document.querySelector("#reading-list");
 const localProbe = document.querySelector("#local-probe");
 const metricButtons = [...document.querySelectorAll("[data-metric]")];
@@ -39,6 +42,31 @@ const metrics = {
 };
 
 const metricKeys = Object.keys(metrics).filter((key) => key !== "score");
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function pluralize(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function sourceLabel(source) {
+  const labels = {
+    "live-local": "live local",
+    "live-map": "live map",
+    "live-region": "live region",
+    "live-ingest": "live ingest",
+    "live-url": "live URL",
+    "live-file": "live file"
+  };
+  return labels[source] || source || "unknown";
+}
 
 const landShapes = [
   [
@@ -202,7 +230,7 @@ function conditionForScore(score) {
 }
 
 function clusterRadius() {
-  return clamp(92 - (viewport.scale - 1) * 15, 32, 92);
+  return 0;
 }
 
 function average(items, selector) {
@@ -422,22 +450,38 @@ function renderPanels() {
   if (!snapshot) return;
 
   const readings = [...snapshot.readings].sort((a, b) => b.score - a.score);
+  if (!readings.length) {
+    averageScore.textContent = "--";
+    globalCondition.textContent = "waiting";
+    liveRegionCount.textContent = "0";
+    probeCount.textContent = String(snapshot.targets?.length || 0);
+    readingList.innerHTML = "";
+    localProbe.innerHTML = "";
+    return;
+  }
+
   const avgScore = readings.reduce((sum, reading) => sum + reading.score, 0) / readings.length;
   const top = readings[0];
+  const metadata = snapshot.metadata || {};
+  const mapProbes = metadata.mapProbes || readings.length;
+  const targetCount = metadata.localTargets || snapshot.targets?.length || 0;
 
   averageScore.textContent = Math.round(avgScore);
   globalCondition.textContent = top.condition;
+  liveRegionCount.textContent = String(mapProbes);
+  probeCount.textContent = String(targetCount);
   updatedAt.textContent = `Updated ${new Date(snapshot.generatedAt).toLocaleTimeString()}`;
+  subtitle.textContent = `Live data · ${pluralize(mapProbes, "map probe")} · ${pluralize(targetCount, "target probe")}`;
 
   readingList.innerHTML = readings
     .map((reading) => {
-      const region = regionFor(reading);
+      const region = regionFor(reading) || { name: reading.regionId };
       return `
-        <article class="reading" data-region="${reading.regionId}">
+        <article class="reading" data-region="${escapeHtml(reading.regionId)}">
           <span class="condition-bar" style="background:${conditionColors[reading.condition]}"></span>
           <div>
-            <h3>${region.name}</h3>
-            <p>${reading.source} · ${reading.condition} · ${formatMetric(reading)}</p>
+            <h3>${escapeHtml(region.name)}</h3>
+            <p>${escapeHtml(sourceLabel(reading.source))} · ${escapeHtml(reading.condition)} · ${escapeHtml(formatMetric(reading))}</p>
           </div>
           <span class="score">${reading.score}</span>
         </article>
@@ -445,20 +489,26 @@ function renderPanels() {
     })
     .join("");
 
-  const local = snapshot.readings.find((reading) => reading.regionId === "local");
-  localProbe.innerHTML = local.probes
+  const local = snapshot.localProbe || snapshot.readings.find((reading) => reading.regionId === "local");
+  localProbe.innerHTML = local?.probes?.length
+    ? local.probes
     .map((probe) => `
-      <div class="probe-row">
-        <span><strong>${probe.name}</strong> ${probe.ok ? "OK" : "Failed"}</span>
-        <span>${probe.totalMs} ms</span>
+      <div class="probe-row ${probe.ok ? "ok" : "failed"}">
+        <span class="probe-main">
+          <strong>${escapeHtml(probe.name)}</strong>
+          <small>${escapeHtml(probe.ok ? (probe.statusCode ? `HTTP ${probe.statusCode}` : "OK") : probe.error || "Failed")} · DNS/TLS/HTTP ${probe.dnsMs}/${probe.tlsMs}/${probe.httpMs} ms</small>
+        </span>
+        <span>${escapeHtml(probe.totalMs)} ms</span>
       </div>
     `)
-    .join("");
+    .join("")
+    : `<div class="empty-state">No local probe results</div>`;
 }
 
 async function loadWeather() {
   try {
     const response = await fetch("/api/weather", { cache: "no-store" });
+    if (!response.ok) throw new Error(`Weather update failed with ${response.status}`);
     snapshot = await response.json();
     regionById = new Map(snapshot.regions.map((region) => [region.id, region]));
     liveStatus.classList.add("online");
@@ -498,13 +548,13 @@ function updateTooltip(event) {
   tooltip.style.left = `${Math.min(rect.width - 250, nearest.point.x + 16)}px`;
   tooltip.style.top = `${Math.max(80, nearest.point.y - 18)}px`;
   tooltip.innerHTML = `
-    <strong>${nearest.label}</strong>
-    <span>${nearest.source} · ${nearest.condition} · ${nearest.readings.length} reading${nearest.readings.length === 1 ? "" : "s"}</span>
+    <strong>${escapeHtml(nearest.label)}</strong>
+    <span>${escapeHtml(sourceLabel(nearest.source))} · ${escapeHtml(nearest.condition)} · ${pluralize(nearest.readings.length, "reading")}</span>
     <span>Latency: ${nearest.metrics.latencyMs} ms</span>
     <span>Jitter: ${nearest.metrics.jitterMs} ms</span>
     <span>Loss: ${nearest.metrics.packetLossPct}%</span>
     <span>DNS/TLS/HTTP: ${nearest.metrics.dnsMs}/${nearest.metrics.tlsMs}/${nearest.metrics.httpMs} ms</span>
-    ${nearest.isCluster ? `<span>${nearest.regions.map((region) => region.name).join(", ")}</span>` : ""}
+    ${nearest.isCluster ? `<span>${escapeHtml(nearest.regions.map((region) => region.name).join(", "))}</span>` : ""}
   `;
   if (changed) draw();
 }

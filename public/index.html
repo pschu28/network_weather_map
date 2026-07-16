@@ -13,7 +13,7 @@
         <div class="top-bar">
           <div>
             <h1>Network Weather</h1>
-            <p id="subtitle">Global basemap with simulated and live-local probes</p>
+            <p id="subtitle">Live-local probes with real regional ingest</p>
           </div>
           <div class="status-strip">
             <span id="live-status" class="status-dot"></span>
@@ -47,15 +47,23 @@
             <span class="label">Average severity</span>
             <strong id="average-score">--</strong>
           </div>
+          <div>
+            <span class="label">Map probes</span>
+            <strong id="live-region-count">--</strong>
+          </div>
+          <div>
+            <span class="label">Probe targets</span>
+            <strong id="probe-count">--</strong>
+          </div>
         </section>
 
         <section>
-          <h2>Regional Readings</h2>
+          <h2>Map Probe Readings</h2>
           <div id="reading-list" class="reading-list"></div>
         </section>
 
         <section>
-          <h2>Live Local Probe</h2>
+          <h2>Target Probe Results</h2>
           <div id="local-probe" class="local-probe"></div>
         </section>
       </aside>

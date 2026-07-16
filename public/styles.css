@@ -157,8 +157,8 @@ h1 {
 
 .metric-switcher {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .metric-switcher button {
@@ -256,12 +256,14 @@ h2 {
 
 .local-probe {
   padding: 12px;
+  max-height: 286px;
+  overflow-y: auto;
 }
 
 .probe-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   padding: 8px 0;
   border-bottom: 1px solid var(--line);
@@ -276,6 +278,33 @@ h2 {
 .probe-row strong {
   color: var(--text);
   font-weight: 700;
+}
+
+.probe-row.failed strong {
+  color: var(--storm);
+}
+
+.probe-main {
+  min-width: 0;
+}
+
+.probe-main strong,
+.probe-main small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.probe-main small {
+  margin-top: 3px;
+  font-size: 11px;
+}
+
+.empty-state {
+  padding: 10px 0;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .tooltip {
